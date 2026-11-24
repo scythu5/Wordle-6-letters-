@@ -510,6 +510,43 @@
     let startTime = null;
     let timerInterval = null;
     let elapsedSeconds = 0;
+    let isCheckingWord = false;
+    const wordCheckCache = new Map(); // Caches results so repeated checks are instant
+
+    async function isValidDictionaryWord(word) {
+      if (word === TARGET_WORD) return true;
+      if (wordCheckCache.has(word)) return wordCheckCache.get(word);
+
+      try {
+        // Exact-match query on Datamuse (includes singulars, plurals & common inflections)
+        const res = await fetch(
+          `https://api.datamuse.com/words?sp=${encodeURIComponent(word.toLowerCase())}&md=f&max=5`
+        );
+        if (!res.ok) throw new Error("Dictionary lookup failed");
+        const data = await res.json();
+
+        // Confirm exact 6-letter match with non-zero real-world usage frequency
+        const exists = data.some((item) => {
+          if (item.word.toUpperCase() !== word) return false;
+          const freqTag = (item.tags || []).find((t) => t.startsWith("f:"));
+          const freq = freqTag ? parseFloat(freqTag.slice(2)) : 0;
+          return freq > 0.01;
+        });
+
+        wordCheckCache.set(word, exists);
+        return exists;
+      } catch (err) {
+        console.warn("Dictionary check failed:", err);
+        return null; // Network error
+      }
+    }
+
+    function shakeCurrentRow() {
+      const rowEl = document.getElementById(`row-${currentRow}`);
+      rowEl.classList.remove("shake");
+      void rowEl.offsetWidth;
+      rowEl.classList.add("shake");
+    }
     const keyStates = {}; // letter -> 'correct' | 'present' | 'absent'
 
     // DOM Elements
@@ -652,7 +689,12 @@
 
     // Input Handling
     function handleKey(key) {
-      if (gameOver || gameScreen.classList.contains("hidden") || !lbModal.classList.contains("hidden")) {
+      if (
+        gameOver ||
+        isCheckingWord ||
+        gameScreen.classList.contains("hidden") ||
+        !lbModal.classList.contains("hidden")
+      ) {
         return;
       }
 
@@ -684,15 +726,29 @@
       }
     }
 
-    function submitGuess() {
+    async function submitGuess() {
       if (currentGuess.length < WORD_LENGTH) {
-        const rowEl = document.getElementById(`row-${currentRow}`);
-        rowEl.classList.remove("shake");
-        void rowEl.offsetWidth;
-        rowEl.classList.add("shake");
+        shakeCurrentRow();
         showToast("Word must be 6 letters!");
         return;
       }
+
+      isCheckingWord = true;
+      const isValid = await isValidDictionaryWord(currentGuess);
+      isCheckingWord = false;
+
+      if (isValid === null) {
+        showToast("Can't reach dictionary—check connection.");
+        return;
+      }
+
+      if (!isValid) {
+        shakeCurrentRow();
+        showToast("Not in word list!");
+        return;
+      }
+
+      // Wordle two-pass evaluation (keep the rest of submitGuess unchanged below here)
 
       // Wordle two-pass evaluation (handles duplicate letters accurately)
       const statuses = Array(WORD_LENGTH).fill("absent");
