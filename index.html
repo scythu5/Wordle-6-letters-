@@ -626,13 +626,20 @@
       resultBanner.classList.add("hidden");
     }
 
-    function startGame() {
+    async function startGame() {
       const name = usernameInput.value.trim();
       if (!name) {
         showToast("Please enter a username first!");
         usernameInput.focus();
         return;
       }
+
+      startBtn.disabled = true;
+      startBtn.textContent = "Loading today's word...";
+      await loadDailyWord();
+      startBtn.disabled = false;
+      startBtn.textContent = "Start Daily Challenge";
+
       username = name;
       playerDisplay.textContent = username;
       dateDisplay.textContent = TODAY_KEY;
