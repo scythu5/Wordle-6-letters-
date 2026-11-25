@@ -408,6 +408,7 @@
       <div class="header-right">
         <div class="pill" id="timer-display">00:00</div>
         <button id="open-lb-btn" class="icon-btn" title="Leaderboard">Leaderboard</button>
+        <button id="exit-btn" class="icon-btn" title="Back to Main Page">Exit</button>
       </div>
     </header>
 
@@ -570,6 +571,7 @@
     const openLbBtn = document.getElementById("open-lb-btn");
     const closeLbBtn = document.getElementById("close-lb-btn");
     const switchUserBtn = document.getElementById("switch-user-btn");
+    const exitBtn = document.getElementById("exit-btn");
 
     // Helpers
     function showToast(msg, duration = 1800) {
@@ -916,14 +918,17 @@
     openLbBtn.addEventListener("click", () => openLeaderboard());
     closeLbBtn.addEventListener("click", () => lbModal.classList.add("hidden"));
 
-    switchUserBtn.addEventListener("click", () => {
+    function returnToMainPage() {
       stopTimer();
       lbModal.classList.add("hidden");
       gameScreen.classList.add("hidden");
       startScreen.classList.remove("hidden");
       usernameInput.value = "";
       usernameInput.focus();
-    });
+    }
+
+    switchUserBtn.addEventListener("click", returnToMainPage);
+    exitBtn.addEventListener("click", returnToMainPage);
 
     document.addEventListener("keydown", (e) => {
       if (e.ctrlKey || e.metaKey || e.altKey) return;
