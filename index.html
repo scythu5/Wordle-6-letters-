@@ -467,6 +467,7 @@
     }
 
     const TODAY_KEY = getTodayKey();
+    const FIREBASE_DB_URL = "https://wordle-6-letters-default-rtdb.asia-southeast1.firebasedatabase.app/";
     const LB_STORAGE_KEY = `wordle6_lb_${TODAY_KEY}`;
     let TARGET_WORD = "";
 
@@ -795,7 +796,7 @@
       if (won) {
         gameOver = true;
         stopTimer();
-        saveScore({ username, tries: triesUsed, time: elapsedSeconds, won: true });
+        await saveScore({ username, tries: triesUsed, time: elapsedSeconds, won: true });
         showToast("Solved! Nice work!", 2000);
         setTimeout(() => {
           openLeaderboard(`You got <strong>${TARGET_WORD}</strong> in <strong>${triesUsed}/${MAX_TRIES}</strong> tries (${formatTime(elapsedSeconds)})!`);
@@ -809,7 +810,7 @@
       if (currentRow >= MAX_TRIES) {
         gameOver = true;
         stopTimer();
-        saveScore({ username, tries: MAX_TRIES, time: elapsedSeconds, won: false });
+        await saveScore({ username, tries: MAX_TRIES, time: elapsedSeconds, won: false });
         showToast(`Out of tries! Word was ${TARGET_WORD}`, 2500);
         setTimeout(() => {
           openLeaderboard(`Out of tries! Today's word was <strong>${TARGET_WORD}</strong>.`);
@@ -817,75 +818,93 @@
       }
     }
 
-    // Leaderboard Persistence & Ranking
-    function getLeaderboard() {
-      try {
-        return JSON.parse(localStorage.getItem(LB_STORAGE_KEY)) || [];
-      } catch {
-        return [];
-      }
-    }
+    // Clean username so it is safe as a Firebase database key
+  function makeUserKey(name) {
+    return name.trim().toLowerCase().replace(/[.#$\[\]\/]/g, "_");
+  }
 
-    function saveScore(entry) {
-      const lb = getLeaderboard();
-      // Keep best run if the same username plays again today
-      const existingIdx = lb.findIndex(
-        (item) => item.username.toLowerCase() === entry.username.toLowerCase()
-      );
+  async function getLeaderboard() {
+    try {
+      const res = await fetch(`${FIREBASE_DB_URL}/leaderboards/${TODAY_KEY}.json`);
+      if (!res.ok) throw new Error("Failed to load leaderboard");
+      const data = await res.json();
+      if (!data) return [];
 
-      if (existingIdx >= 0) {
-        const prev = lb[existingIdx];
-        const isBetter =
-          (entry.won && !prev.won) ||
-          (entry.won === prev.won &&
-            (entry.tries < prev.tries ||
-              (entry.tries === prev.tries && entry.time < prev.time)));
-        if (isBetter) lb[existingIdx] = entry;
-      } else {
-        lb.push(entry);
-      }
-
+      const lb = Object.values(data);
       // Sort: Winners first -> Fewest tries -> Fastest time
       lb.sort((a, b) => {
         if (a.won !== b.won) return a.won ? -1 : 1;
         if (a.tries !== b.tries) return a.tries - b.tries;
         return a.time - b.time;
       });
-
-      localStorage.setItem(LB_STORAGE_KEY, JSON.stringify(lb));
+      return lb;
+    } catch (err) {
+      console.error("Leaderboard fetch error:", err);
+      return [];
     }
+  }
 
-    function openLeaderboard(bannerHtml = "") {
-      lbTitle.textContent = `Leaderboard (${TODAY_KEY})`;
-      if (bannerHtml) {
-        resultBanner.innerHTML = bannerHtml;
-        resultBanner.classList.remove("hidden");
-      } else {
-        resultBanner.classList.add("hidden");
-      }
+  async function saveScore(entry) {
+    const userKey = makeUserKey(entry.username);
+    const entryUrl = `${FIREBASE_DB_URL}/leaderboards/${TODAY_KEY}/${userKey}.json`;
 
-      const lb = getLeaderboard();
-      lbBody.innerHTML = "";
+    try {
+      // Check if this username already has a score today so we keep their best run
+      const existingRes = await fetch(entryUrl);
+      const prev = existingRes.ok ? await existingRes.json() : null;
 
-      if (lb.length === 0) {
-        lbBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--muted);">No players yet today. Be the first!</td></tr>`;
-      } else {
-        lb.forEach((row, idx) => {
-          const tr = document.createElement("tr");
-          const rankClass = idx < 3 && row.won ? `rank-${idx + 1}` : "";
-          const triesLabel = row.won ? `${row.tries} / ${MAX_TRIES}` : `X / ${MAX_TRIES}`;
-          tr.innerHTML = `
-            <td class="${rankClass}">${row.won ? idx + 1 : "-"}</td>
-            <td>${escapeHtml(row.username)}</td>
-            <td>${triesLabel}</td>
-            <td>${formatTime(row.time)}</td>
-          `;
-          lbBody.appendChild(tr);
+      const shouldSave =
+        !prev ||
+        (entry.won && !prev.won) ||
+        (entry.won === prev.won &&
+          (entry.tries < prev.tries ||
+            (entry.tries === prev.tries && entry.time < prev.time)));
+
+      if (shouldSave) {
+        await fetch(entryUrl, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(entry),
         });
       }
-
-      lbModal.classList.remove("hidden");
+    } catch (err) {
+      console.error("Failed to save score:", err);
+      showToast("Could not sync score to leaderboard.");
     }
+  }
+
+  async function openLeaderboard(bannerHtml = "") {
+    lbTitle.textContent = `Leaderboard (${TODAY_KEY})`;
+    if (bannerHtml) {
+      resultBanner.innerHTML = bannerHtml;
+      resultBanner.classList.remove("hidden");
+    } else {
+      resultBanner.classList.add("hidden");
+    }
+
+    lbBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--muted);">Loading leaderboard...</td></tr>`;
+    lbModal.classList.remove("hidden");
+
+    const lb = await getLeaderboard();
+    lbBody.innerHTML = "";
+
+    if (lb.length === 0) {
+      lbBody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--muted);">No players yet today. Be the first!</td></tr>`;
+    } else {
+      lb.forEach((row, idx) => {
+        const tr = document.createElement("tr");
+        const rankClass = idx < 3 && row.won ? `rank-${idx + 1}` : "";
+        const triesLabel = row.won ? `${row.tries} / ${MAX_TRIES}` : `X / ${MAX_TRIES}`;
+        tr.innerHTML = `
+          <td class="${rankClass}">${row.won ? idx + 1 : "-"}</td>
+          <td>${escapeHtml(row.username)}</td>
+          <td>${triesLabel}</td>
+          <td>${formatTime(row.time)}</td>
+        `;
+        lbBody.appendChild(tr);
+      });
+    }
+  }
 
     // Event Listeners
     startBtn.addEventListener("click", startGame);
